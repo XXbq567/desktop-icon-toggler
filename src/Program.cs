@@ -16,53 +16,88 @@ namespace DesktopIconToggler
         [DllImport("user32.dll")]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
         
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr GetConsoleWindow();
+        
+        [DllImport("user32.dll")]
+        private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+        
         private const int MOD_ALT = 0x0001;
         private const int VK_Q = 0x51;
         private const int HOTKEY_ID = 9000;
+        private const int SW_HIDE = 0;
         
         private static readonly string APP_NAME = "DesktopIconToggler";
         private static readonly string REG_KEY = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
         
         private static Mutex mutex;
+        private static NotifyIcon trayIcon;
         
         [STAThread]
         static void Main(string[] args)
         {
+            // 隐藏控制台窗口
+            IntPtr consoleWindow = GetConsoleWindow();
+            if (consoleWindow != IntPtr.Zero)
+            {
+                ShowWindow(consoleWindow, SW_HIDE);
+            }
+            
             // 单实例检查
             mutex = new Mutex(true, APP_NAME, out bool createdNew);
             if (!createdNew)
             {
-                Console.WriteLine("程序已在运行中");
-                return;
+                return; // 程序已在运行
             }
             
             try
             {
-                Console.WriteLine("桌面图标切换器启动中...");
-                Console.WriteLine("快捷键: Alt + Q");
-                Console.WriteLine("按 Ctrl+C 退出程序");
-                
                 // 添加到开机启动
                 AddToStartup();
                 
-                // 注册热键
-                RegisterHotKey(Process.GetCurrentProcess().MainWindowHandle, HOTKEY_ID, MOD_ALT, VK_Q);
-                Console.WriteLine("热键 Alt+Q 注册成功");
+                // 创建托盘图标（用于调试和退出）
+                CreateTrayIcon();
                 
-                // 创建隐藏的窗口来接收热键消息
+                // 创建隐藏窗口并运行
                 Application.Run(new HiddenForm());
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"错误: {ex.Message}");
+                MessageBox.Show($"程序启动失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
             finally
             {
                 // 清理资源
-                UnregisterHotKey(Process.GetCurrentProcess().MainWindowHandle, HOTKEY_ID);
+                trayIcon?.Dispose();
                 mutex?.ReleaseMutex();
                 mutex?.Dispose();
             }
+        }
+        
+        private static void CreateTrayIcon()
+        {
+            trayIcon = new NotifyIcon();
+            trayIcon.Icon = SystemIcons.Application;
+            trayIcon.Text = "桌面图标切换器 - Alt+Q";
+            trayIcon.Visible = true;
+            
+            // 右键菜单
+            ContextMenuStrip menu = new ContextMenuStrip();
+            menu.Items.Add("状态: 运行中").Enabled = false;
+            menu.Items.Add("快捷键: Alt+Q").Enabled = false;
+            menu.Items.Add(new ToolStripSeparator());
+            
+            ToolStripMenuItem exitItem = new ToolStripMenuItem("退出");
+            exitItem.Click += (s, e) => Application.Exit();
+            menu.Items.Add(exitItem);
+            
+            trayIcon.ContextMenuStrip = menu;
+            
+            // 双击托盘图标显示提示
+            trayIcon.DoubleClick += (s, e) => {
+                MessageBox.Show("桌面图标切换器正在运行\n\n快捷键: Alt + Q\n功能: 切换桌面图标显示/隐藏", 
+                    "桌面图标切换器", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            };
         }
         
         private static void AddToStartup()
@@ -75,13 +110,12 @@ namespace DesktopIconToggler
                     if (key?.GetValue(APP_NAME) == null)
                     {
                         key?.SetValue(APP_NAME, exePath);
-                        Console.WriteLine("已添加到开机启动");
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                Console.WriteLine($"添加开机启动失败: {ex.Message}");
+                // 静默处理错误，不影响主功能
             }
         }
     }
