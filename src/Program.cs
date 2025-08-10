@@ -28,6 +28,7 @@ namespace DesktopIconToggler
         private const int VK_Q = 0x51;
         private const int HOTKEY_ID = 9000;
         private const int SW_HIDE = 0;
+        private const int SW_SHOW = 5;
         
         private static readonly string APP_NAME = "DesktopIconToggler";
         private static readonly string REG_KEY = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
@@ -35,6 +36,7 @@ namespace DesktopIconToggler
         
         private static Mutex mutex;
         private static NotifyIcon trayIcon;
+        private static DebugWindow debugWindow;
         
         [STAThread]
         static void Main(string[] args)
@@ -43,10 +45,25 @@ namespace DesktopIconToggler
             {
                 WriteLog("程序启动开始...");
                 
-                // 如果有参数 --debug，显示控制台窗口
+                // 检查是否有 --debug 参数
                 bool debugMode = args.Length > 0 && args[0] == "--debug";
+                bool showConsole = args.Length > 0 && args[0] == "--console";
                 
-                if (!debugMode)
+                if (showConsole)
+                {
+                    // 显示控制台窗口
+                    IntPtr consoleWindow = GetConsoleWindow();
+                    if (consoleWindow != IntPtr.Zero)
+                    {
+                        ShowWindow(consoleWindow, SW_SHOW);
+                    }
+                    else
+                    {
+                        AllocConsole();
+                    }
+                    Console.WriteLine("控制台模式启动...");
+                }
+                else if (!debugMode)
                 {
                     // 隐藏控制台窗口
                     IntPtr consoleWindow = GetConsoleWindow();
@@ -55,11 +72,6 @@ namespace DesktopIconToggler
                         ShowWindow(consoleWindow, SW_HIDE);
                     }
                 }
-                else
-                {
-                    AllocConsole();
-                    Console.WriteLine("调试模式启动...");
-                }
                 
                 WriteLog("检查单实例...");
                 // 单实例检查
@@ -67,7 +79,7 @@ namespace DesktopIconToggler
                 if (!createdNew)
                 {
                     WriteLog("程序已在运行中，退出");
-                    if (debugMode) Console.WriteLine("程序已在运行中");
+                    if (showConsole) Console.WriteLine("程序已在运行中");
                     return;
                 }
                 
@@ -76,12 +88,21 @@ namespace DesktopIconToggler
                 AddToStartup();
                 
                 WriteLog("创建托盘图标...");
-                // 创建托盘图标（用于调试和退出）
+                // 创建托盘图标
                 CreateTrayIcon();
+                
+                // 如果是调试模式，显示调试窗口
+                if (debugMode)
+                {
+                    WriteLog("创建调试窗口...");
+                    debugWindow = new DebugWindow();
+                    debugWindow.Show();
+                    debugWindow.AddLog("调试窗口已启动");
+                }
                 
                 WriteLog("创建隐藏窗口...");
                 // 创建隐藏窗口并运行
-                HiddenForm form = new HiddenForm(debugMode);
+                HiddenForm form = new HiddenForm(debugMode, showConsole, debugWindow);
                 WriteLog("启动应用程序消息循环...");
                 Application.Run(form);
             }
@@ -96,6 +117,7 @@ namespace DesktopIconToggler
                 WriteLog("清理资源...");
                 // 清理资源
                 trayIcon?.Dispose();
+                debugWindow?.Close();
                 mutex?.ReleaseMutex();
                 mutex?.Dispose();
                 WriteLog("程序退出");
@@ -111,6 +133,9 @@ namespace DesktopIconToggler
             {
                 string logEntry = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}";
                 File.AppendAllText(LOG_FILE, logEntry + Environment.NewLine);
+                
+                // 如果有调试窗口，也输出到调试窗口
+                debugWindow?.AddLog(message);
             }
             catch { }
         }
@@ -132,7 +157,7 @@ namespace DesktopIconToggler
                 }
                 
                 trayIcon.Icon = Icon.FromHandle(iconBitmap.GetHicon());
-                trayIcon.Text = "桌面图标切换器 - Alt+Q (点击查看日志)";
+                trayIcon.Text = "桌面图标切换器 - Alt+Q";
                 trayIcon.Visible = true;
                 
                 WriteLog("托盘图标创建成功");
@@ -143,7 +168,11 @@ namespace DesktopIconToggler
                 menu.Items.Add("快捷键: Alt+Q").Enabled = false;
                 menu.Items.Add(new ToolStripSeparator());
                 
-                ToolStripMenuItem logItem = new ToolStripMenuItem("查看日志");
+                ToolStripMenuItem debugItem = new ToolStripMenuItem("打开调试窗口");
+                debugItem.Click += (s, e) => ShowDebugWindow();
+                menu.Items.Add(debugItem);
+                
+                ToolStripMenuItem logItem = new ToolStripMenuItem("查看日志文件");
                 logItem.Click += (s, e) => ShowLogFile();
                 menu.Items.Add(logItem);
                 
@@ -151,15 +180,19 @@ namespace DesktopIconToggler
                 testItem.Click += (s, e) => TestToggle();
                 menu.Items.Add(testItem);
                 
+                ToolStripMenuItem consoleItem = new ToolStripMenuItem("显示控制台");
+                consoleItem.Click += (s, e) => ShowConsole();
+                menu.Items.Add(consoleItem);
+                
                 ToolStripMenuItem exitItem = new ToolStripMenuItem("退出");
                 exitItem.Click += (s, e) => Application.Exit();
                 menu.Items.Add(exitItem);
                 
                 trayIcon.ContextMenuStrip = menu;
                 
-                // 双击托盘图标显示提示
+                // 双击托盘图标显示调试窗口
                 trayIcon.DoubleClick += (s, e) => {
-                    ShowLogFile();
+                    ShowDebugWindow();
                 };
                 
                 WriteLog("托盘菜单设置完成");
@@ -168,6 +201,33 @@ namespace DesktopIconToggler
             {
                 WriteLog($"创建托盘图标失败: {ex.Message}");
                 throw;
+            }
+        }
+        
+        private static void ShowDebugWindow()
+        {
+            if (debugWindow == null || debugWindow.IsDisposed)
+            {
+                debugWindow = new DebugWindow();
+                debugWindow.AddLog("调试窗口已打开");
+            }
+            debugWindow.Show();
+            debugWindow.BringToFront();
+        }
+        
+        private static void ShowConsole()
+        {
+            IntPtr consoleWindow = GetConsoleWindow();
+            if (consoleWindow == IntPtr.Zero)
+            {
+                AllocConsole();
+                Console.WriteLine("控制台已启用");
+                WriteLog("控制台窗口已显示");
+            }
+            else
+            {
+                ShowWindow(consoleWindow, SW_SHOW);
+                WriteLog("控制台窗口已显示");
             }
         }
         
