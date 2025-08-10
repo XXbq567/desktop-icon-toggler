@@ -1,64 +1,87 @@
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
 namespace DesktopIconToggler
 {
-    public partial class HiddenForm : Form
+    class Program
     {
-        private const int WM_HOTKEY = 0x0312;
+        // Win32 API
+        [DllImport("user32.dll")]
+        private static extern bool RegisterHotKey(IntPtr hWnd, int id, int fsModifiers, int vlc);
+        
+        [DllImport("user32.dll")]
+        private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
+        
+        private const int MOD_ALT = 0x0001;
+        private const int VK_Q = 0x51;
         private const int HOTKEY_ID = 9000;
         
-        [DllImport("shell32.dll")]
-        private static extern void SHChangeNotify(int wEventId, int uFlags, IntPtr dwItem1, IntPtr dwItem2);
+        private static readonly string APP_NAME = "DesktopIconToggler";
+        private static readonly string REG_KEY = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run";
         
-        public HiddenForm()
-        {
-            this.WindowState = FormWindowState.Minimized;
-            this.ShowInTaskbar = false;
-            this.Visible = false;
-            
-            // 处理 Ctrl+C 退出
-            Console.CancelKeyPress += (sender, e) => {
-                e.Cancel = true;
-                Application.Exit();
-            };
-        }
+        private static Mutex mutex;
         
-        protected override void WndProc(ref Message m)
+        [STAThread]
+        static void Main(string[] args)
         {
-            if (m.Msg == WM_HOTKEY && m.WParam.ToInt32() == HOTKEY_ID)
+            // 单实例检查
+            mutex = new Mutex(true, APP_NAME, out bool createdNew);
+            if (!createdNew)
             {
-                ToggleDesktopIcons();
+                Console.WriteLine("程序已在运行中");
+                return;
             }
-            base.WndProc(ref m);
+            
+            try
+            {
+                Console.WriteLine("桌面图标切换器启动中...");
+                Console.WriteLine("快捷键: Alt + Q");
+                Console.WriteLine("按 Ctrl+C 退出程序");
+                
+                // 添加到开机启动
+                AddToStartup();
+                
+                // 注册热键
+                RegisterHotKey(Process.GetCurrentProcess().MainWindowHandle, HOTKEY_ID, MOD_ALT, VK_Q);
+                Console.WriteLine("热键 Alt+Q 注册成功");
+                
+                // 创建隐藏的窗口来接收热键消息
+                Application.Run(new HiddenForm());
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"错误: {ex.Message}");
+            }
+            finally
+            {
+                // 清理资源
+                UnregisterHotKey(Process.GetCurrentProcess().MainWindowHandle, HOTKEY_ID);
+                mutex?.ReleaseMutex();
+                mutex?.Dispose();
+            }
         }
         
-        private void ToggleDesktopIcons()
+        private static void AddToStartup()
         {
             try
             {
-                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Advanced", true))
+                string exePath = Application.ExecutablePath;
+                using (RegistryKey key = Registry.CurrentUser.OpenSubKey(REG_KEY, true))
                 {
-                    if (key != null)
+                    if (key?.GetValue(APP_NAME) == null)
                     {
-                        object currentValue = key.GetValue("HideIcons");
-                        int newValue = (currentValue != null && (int)currentValue == 1) ? 0 : 1;
-                        
-                        key.SetValue("HideIcons", newValue, RegistryValueKind.DWord);
-                        
-                        // 刷新桌面
-                        SHChangeNotify(0x8000000, 0x1000, IntPtr.Zero, IntPtr.Zero);
-                        
-                        string status = newValue == 1 ? "隐藏" : "显示";
-                        Console.WriteLine($"桌面图标已{status}");
+                        key?.SetValue(APP_NAME, exePath);
+                        Console.WriteLine("已添加到开机启动");
                     }
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"切换桌面图标失败: {ex.Message}");
+                Console.WriteLine($"添加开机启动失败: {ex.Message}");
             }
         }
     }
