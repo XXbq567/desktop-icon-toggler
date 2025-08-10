@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
+using System.Drawing;
 using Microsoft.Win32;
 
 namespace DesktopIconToggler
@@ -77,7 +78,17 @@ namespace DesktopIconToggler
         private static void CreateTrayIcon()
         {
             trayIcon = new NotifyIcon();
-            trayIcon.Icon = SystemIcons.Application;
+            
+            // 创建一个简单的16x16图标
+            Bitmap iconBitmap = new Bitmap(16, 16);
+            using (Graphics g = Graphics.FromImage(iconBitmap))
+            {
+                g.FillRectangle(Brushes.DarkBlue, 0, 0, 16, 16);
+                g.FillRectangle(Brushes.White, 2, 2, 12, 12);
+                g.DrawString("D", SystemFonts.DefaultFont, Brushes.DarkBlue, 3, 1);
+            }
+            
+            trayIcon.Icon = Icon.FromHandle(iconBitmap.GetHicon());
             trayIcon.Text = "桌面图标切换器 - Alt+Q";
             trayIcon.Visible = true;
             
